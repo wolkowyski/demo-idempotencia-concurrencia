@@ -1,0 +1,742 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Demo · Idempotencia y concurrencia</title>
+<style>
+  :root {
+    --tinta: #0E1A2B;
+    --texto: #3E4957;
+    --suave: #5F6B7A;
+    --papel: #F4F5F1;
+    --tarjeta: #FCFCFA;
+    --borde: #D9DDE3;
+    --azul: #2459D6;
+    --azul-claro: #E3EAFB;
+    --azul-replay: #8EAEF2;
+    --naranja: #B4501A;
+    --naranja-claro: #FBE7DA;
+    --gris-cola: #C9CED6;
+    --mono: "JetBrains Mono", "Cascadia Mono", Consolas, "Courier New", monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--papel);
+    color: var(--texto);
+    font: 16px/1.45 "IBM Plex Sans", "Segoe UI", system-ui, -apple-system, Arial, sans-serif;
+  }
+  header {
+    background: var(--tinta);
+    color: #F4F5F1;
+    padding: 16px 28px;
+    display: flex;
+    align-items: center;
+    gap: 24px;
+    flex-wrap: wrap;
+  }
+  header h1 { margin: 0; font-size: 22px; font-weight: 600; }
+  header .sub { color: #AEBBCB; font-size: 15px; }
+  header .espacio { flex: 1; }
+  .pill {
+    font: 600 14px var(--mono);
+    padding: 4px 12px;
+    border-radius: 999px;
+    background: #24324A;
+    color: #DCE4EE;
+  }
+  .pill.ok { background: #1E4DB7; color: #fff; }
+  .pill.mal { background: var(--naranja); color: #fff; }
+  button {
+    font: inherit;
+    cursor: pointer;
+    border-radius: 10px;
+    border: 1px solid var(--borde);
+    background: var(--tarjeta);
+    color: var(--tinta);
+    padding: 8px 16px;
+  }
+  button:disabled { opacity: .55; cursor: default; }
+  header button { background: transparent; color: #DCE4EE; border-color: #3A4A63; }
+
+  nav {
+    display: flex;
+    gap: 8px;
+    padding: 16px 28px 0;
+    flex-wrap: wrap;
+  }
+  nav button { font-weight: 600; }
+  nav button .num { font-family: var(--mono); color: var(--azul); margin-right: 6px; }
+  nav button.activo { background: var(--tinta); color: #F4F5F1; border-color: var(--tinta); }
+  nav button.activo .num { color: #7FA7FF; }
+
+  main {
+    display: grid;
+    grid-template-columns: minmax(300px, 1fr) minmax(440px, 1.7fr) minmax(320px, 1.15fr);
+    gap: 20px;
+    padding: 16px 28px 28px;
+    align-items: start;
+  }
+  @media (max-width: 1500px) {
+    main { grid-template-columns: minmax(270px, .9fr) minmax(440px, 1.9fr) minmax(290px, 1fr); gap: 16px; padding: 14px 20px 24px; }
+  }
+  @media (max-width: 1180px) { main { grid-template-columns: 1fr 1.4fr; } #col-base { grid-column: 1 / -1; } }
+  @media (max-width: 820px) { main { grid-template-columns: 1fr; } }
+
+  .panel {
+    background: var(--tarjeta);
+    border: 1px solid var(--borde);
+    border-radius: 14px;
+    padding: 20px 22px;
+  }
+  .panel + .panel { margin-top: 16px; }
+  .eti {
+    font: 600 13px var(--mono);
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--azul);
+    margin: 0 0 6px;
+  }
+  h2 { margin: 0 0 12px; font-size: 24px; line-height: 1.2; color: var(--tinta); }
+  h3 { margin: 18px 0 6px; font-size: 15px; color: var(--tinta); text-transform: uppercase; letter-spacing: .5px; }
+  p { margin: 0 0 10px; }
+  ul.esperado { margin: 0; padding-left: 20px; }
+  ul.esperado li { margin: 2px 0; }
+  code, .mono { font-family: var(--mono); font-size: .92em; }
+  code { background: #EEF0EC; padding: 1px 6px; border-radius: 6px; color: var(--tinta); }
+  .mirar {
+    background: var(--azul-claro);
+    border-radius: 10px;
+    padding: 10px 14px;
+    margin-top: 14px;
+    color: #1E3E8F;
+  }
+  .ejecutar {
+    margin-top: 18px;
+    width: 100%;
+    background: var(--azul);
+    color: #fff;
+    border-color: var(--azul);
+    font-size: 18px;
+    font-weight: 600;
+    padding: 12px;
+  }
+  .nota { color: var(--suave); font-size: 14px; margin-top: 8px; }
+
+  .verif { list-style: none; margin: 0; padding: 0; }
+  .verif li { display: flex; gap: 10px; align-items: baseline; padding: 6px 0; border-top: 1px solid var(--borde); }
+  .verif li:first-child { border-top: none; }
+  .verif .marca { font: 700 14px var(--mono); padding: 1px 8px; border-radius: 6px; white-space: nowrap; }
+  .verif .si { background: var(--azul-claro); color: #1E4DB7; }
+  .verif .no { background: var(--naranja-claro); color: #9A4313; }
+  .verif .bug { background: var(--naranja); color: #fff; }
+
+  /* ---- línea de tiempo ---- */
+  .cabecera { display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; }
+  .cabecera h2 { margin-bottom: 4px; }
+  .leyenda { display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; color: var(--suave); margin-bottom: 12px; }
+  .leyenda span::before { content: ""; display: inline-block; width: 14px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: 0; }
+  .leyenda .l-creada::before { background: var(--azul); }
+  .leyenda .l-replay::before { background: var(--azul-replay); }
+  .leyenda .l-error::before { background: var(--naranja); }
+  .leyenda .l-cola::before { width: 22px; background: repeating-linear-gradient(90deg, #9AA5B4 0 4px, transparent 4px 7px); }
+  .vacio { color: var(--suave); padding: 28px 0; text-align: center; }
+  .fila {
+    display: grid;
+    grid-template-columns: 116px 1fr 236px;
+    gap: 12px;
+    align-items: center;
+    padding: 5px 6px;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  .fila:hover { background: #EEF1F6; }
+  .fila.sel { background: #E6ECF8; outline: 2px solid var(--azul); }
+  .fila .quien { font: 600 14px var(--mono); color: var(--tinta); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pista { position: relative; height: 22px; background: #EEF0EC; border-radius: 6px; }
+  .pista .cola, .pista .barra { position: absolute; top: 3px; bottom: 3px; border-radius: 4px; }
+  .pista .cola { background: repeating-linear-gradient(90deg, var(--gris-cola) 0 4px, transparent 4px 7px); }
+  .pista .barra.creada { background: var(--azul); }
+  .pista .barra.replay { background: var(--azul-replay); }
+  .pista .barra.error { background: var(--naranja); }
+  .pista .barra.enviando { background: #9AA5B4; animation: latido 1s infinite; }
+  @keyframes latido { 50% { opacity: .45; } }
+  .resultado { font-size: 14px; line-height: 1.25; }
+  .resultado b { font-family: var(--mono); }
+  .resultado .ms { color: var(--suave); font-family: var(--mono); font-size: 12px; }
+  .r-creada b { color: var(--azul); }
+  .r-replay b { color: #3D63B8; }
+  .r-error b { color: var(--naranja); }
+  .eje { display: grid; grid-template-columns: 116px 1fr 236px; gap: 12px; padding: 2px 6px 0; }
+  .eje .marcas { position: relative; height: 18px; font: 12px var(--mono); color: var(--suave); }
+  .eje .marcas span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
+  .eje .marcas span:first-child { transform: none; }
+  .eje .marcas span.ultima { transform: translateX(-100%); }
+
+  .detalle { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 1500px) { .detalle { grid-template-columns: 1fr; } }
+  pre {
+    margin: 0;
+    background: var(--tinta);
+    color: #DCE4EE;
+    border-radius: 10px;
+    padding: 12px 14px;
+    font: 13.5px/1.5 var(--mono);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  pre .k { color: #7FA7FF; }
+  pre .v { color: #F2C98A; }
+  pre .st-ok { color: #9CC0FF; font-weight: 700; }
+  pre .st-err { color: #F29A5E; font-weight: 700; }
+
+  /* ---- base de datos ---- */
+  .tabla-titulo { display: flex; justify-content: space-between; align-items: baseline; margin: 16px 0 6px; }
+  .tabla-titulo:first-of-type { margin-top: 4px; }
+  .tabla-titulo h3 { margin: 0; text-transform: none; letter-spacing: 0; font: 600 15px var(--mono); }
+  .tabla-titulo .cuenta { font: 600 13px var(--mono); color: var(--suave); }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th { text-align: left; font-weight: 600; color: var(--suave); border-bottom: 2px solid var(--borde); padding: 4px 6px; font-size: 13px; }
+  td { border-bottom: 1px solid #E6E8EC; padding: 5px 6px; font-family: var(--mono); font-size: 13px; color: var(--tinta); }
+  tr.nueva td { animation: aparece 1.6s ease-out; }
+  @keyframes aparece { from { background: #FFE9B8; } to { background: transparent; } }
+  tr.duplicada td { background: var(--naranja-claro); }
+  .sin-filas { color: var(--suave); font-size: 14px; padding: 6px; font-style: italic; }
+
+  /* ---- petición manual ---- */
+  form label { display: block; font-size: 14px; color: var(--suave); margin: 10px 0 4px; }
+  form input, form select {
+    width: 100%;
+    font: 15px var(--mono);
+    padding: 8px 10px;
+    border: 1px solid var(--borde);
+    border-radius: 8px;
+    background: #fff;
+    color: var(--tinta);
+  }
+  .fila-form { display: flex; gap: 8px; }
+  .fila-form > * { flex: 1; }
+  .check { display: flex; gap: 8px; align-items: center; margin-top: 10px; font-size: 14px; }
+  .check input { width: auto; }
+
+  @media (max-width: 1500px) {
+    .fila, .eje { grid-template-columns: 106px 1fr 200px; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>Idempotencia y control de concurrencia</h1>
+    <div class="sub">Demo del TP de Investigación · Grupo 2 · Temas 9 y 10 · POST /reservas</div>
+  </div>
+  <div class="espacio"></div>
+  <span id="estado-api" class="pill">conectando…</span>
+  <button id="btn-limpiar" type="button">Limpiar base</button>
+</header>
+
+<nav id="pestanas"></nav>
+
+<main>
+  <section id="col-explicacion">
+    <div class="panel" id="explicacion"></div>
+    <div class="panel" id="verificacion" hidden>
+      <p class="eti">Verificación en la base</p>
+      <ul class="verif" id="lista-verif"></ul>
+    </div>
+  </section>
+
+  <section id="col-peticiones">
+    <div class="panel">
+      <div class="cabecera">
+        <h2>Peticiones</h2>
+        <span class="nota" id="nota-peticiones"></span>
+      </div>
+      <div class="leyenda">
+        <span class="l-creada">creó la reserva</span>
+        <span class="l-replay">replay: respuesta guardada</span>
+        <span class="l-error">rechazada (409 / 422 / 400)</span>
+        <span class="l-cola">en cola del navegador</span>
+      </div>
+      <div id="timeline"><div class="vacio">Elegí un caso y tocá <b>Ejecutar</b>.</div></div>
+    </div>
+    <div class="panel">
+      <p class="eti">Detalle de la petición seleccionada</p>
+      <div id="detalle"><div class="vacio">Tocá una petición de la lista para ver qué se mandó y qué respondió la API.</div></div>
+    </div>
+  </section>
+
+  <section id="col-base">
+    <div class="panel">
+      <p class="eti">PostgreSQL · en vivo</p>
+      <h2>Base de datos</h2>
+      <div id="base"></div>
+    </div>
+  </section>
+</main>
+
+<script>
+"use strict";
+
+const FECHA = "2026-11-12T18:00:00";
+
+const CASOS = [
+  {
+    id: 1, corto: "Reintento secuencial", diapo: "Diapositiva 7",
+    titulo: "Caso 1 · Reintento secuencial",
+    escenario: "El cliente manda la reserva, no le llega la respuesta (timeout) y reintenta. Simulamos 10 intentos seguidos, siempre con la misma <code>Idempotency-Key</code> y el mismo body.",
+    esperado: ["1 sola reserva en la base.", "La 1ª petición crea la reserva (201).", "Las otras 9 reciben la respuesta guardada (replay)."],
+    como: "La clave y la respuesta quedan en <code>idempotency_records</code>. Un reintento con la misma clave y el mismo body no se vuelve a procesar: la API devuelve lo que guardó.",
+    mirar: "Las barras de los replays son mucho más cortas que la primera: no pasan por la lógica de la reserva.",
+    destacar: ps => ps[1],
+    async correr(ctx) {
+      const clave = ctx.clave("caso1");
+      for (let i = 1; i <= 10; i++) {
+        await enviar({ ruta: "/reservas", clave, body: cuerpo(42, 1), quien: "#" + i });
+      }
+    },
+    verificar(ps, e) {
+      const nuevas = ps.filter(p => p.status === 201 && !p.replay).length;
+      const replays = ps.filter(p => p.status === 201 && p.replay).length;
+      const iguales = ps.every(p => p.cuerpo === ps[0].cuerpo);
+      return [
+        chequeo(contar(e.reservas, 1) === 1, `Reservas del conductor 1: ${contar(e.reservas, 1)}`, "esperado 1"),
+        chequeo(nuevas === 1 && replays === 9, `Respuestas: ${nuevas} nueva y ${replays} replays`, "esperado 1 y 9"),
+        chequeo(iguales, iguales ? "Los 10 bodies de respuesta son idénticos" : "Los bodies de respuesta difieren", "")
+      ];
+    }
+  },
+  {
+    id: 2, corto: "Reintento paralelo", diapo: "Diapositivas 5 y 7",
+    titulo: "Caso 2 · Reintento paralelo",
+    escenario: "Las mismas 10 peticiones idénticas, pero todas al mismo tiempo: por ejemplo, un cliente que reintenta muy rápido o un balanceador que reenvía.",
+    esperado: ["1 sola reserva en la base.", "Solo 1 petición crea; las demás hacen replay."],
+    como: "El <code>INSERT</code> de la clave choca con el <code>UNIQUE (clave)</code>: PostgreSQL hace esperar a las otras transacciones hasta el COMMIT de la primera. Cuando siguen, leen la respuesta guardada.",
+    mirar: "Las barras terminan casi juntas: las demás esperaron a la ganadora. El tramo punteado es la cola del navegador, que abre como máximo 6 conexiones a la vez (demo.sh manda las 10 de una).",
+    destacar: ps => ps.find(p => p.status === 201 && !p.replay),
+    async correr(ctx) {
+      const clave = ctx.clave("caso2");
+      await Promise.all(rango(10).map(i =>
+        enviar({ ruta: "/reservas", clave, body: cuerpo(42, 2), quien: "#" + i })));
+    },
+    verificar(ps, e) {
+      const nuevas = ps.filter(p => p.status === 201 && !p.replay).length;
+      return [
+        chequeo(contar(e.reservas, 2) === 1, `Reservas del conductor 2: ${contar(e.reservas, 2)}`, "esperado 1"),
+        chequeo(nuevas === 1, `Peticiones que crearon algo: ${nuevas}`, "esperado 1")
+      ];
+    }
+  },
+  {
+    id: 3, corto: "Misma clave, otro body", diapo: "Diapositiva 8",
+    titulo: "Caso 3 · Misma clave, otro body",
+    escenario: "El cliente reusa la <code>Idempotency-Key</code> de una reserva ya hecha, pero cambia el conductor: del 3 al 6.",
+    esperado: ["La original crea la reserva (201).", "El reuso devuelve 422 Unprocessable Content.", "No se crea ninguna reserva para el conductor 6."],
+    como: "Junto a la clave se guarda el SHA-256 del body (el fingerprint). Misma clave con un hash distinto es un uso indebido de la clave, y la API lo rechaza en vez de devolver la reserva vieja.",
+    mirar: "Tocá la petición “Reuso” para ver el problem+json que devuelve la API, y compará el hash en la tabla de claves.",
+    async correr(ctx) {
+      const clave = ctx.clave("caso3");
+      await enviar({ ruta: "/reservas", clave, body: cuerpo(42, 3), quien: "Original" });
+      await enviar({ ruta: "/reservas", clave, body: cuerpo(42, 6), quien: "Reuso" });
+    },
+    destacar: ps => ps.find(p => p.quien === "Reuso"),
+    verificar(ps, e) {
+      const reuso = ps.find(p => p.quien === "Reuso");
+      return [
+        chequeo(reuso && reuso.status === 422, `Status del reuso: ${reuso ? reuso.status : "-"}`, "esperado 422"),
+        chequeo(contar(e.reservas, 6) === 0, `Reservas del conductor 6: ${contar(e.reservas, 6)}`, "esperado 0"),
+        chequeo(contar(e.reservas, 3) === 1, `Reservas del conductor 3: ${contar(e.reservas, 3)}`, "esperado 1")
+      ];
+    }
+  },
+  {
+    id: 4, corto: "Versión ingenua", diapo: "Diapositiva 9",
+    titulo: "Caso 4 · Versión ingenua: carrera por el conductor",
+    escenario: "Dos clientes distintos reservan al conductor 4 para el mismo horario, en el mismo instante. Usan el endpoint sin bloqueo ni UNIQUE: <code>/ingenuo/reservas</code>.",
+    esperado: ["Los dos reciben 201.", "Quedan 2 reservas para el mismo conductor: el bug de doble asignación."],
+    como: "Los dos preguntan “¿el conductor está libre?” antes de que cualquiera inserte (check-then-act). Aunque cada uno corre en una transacción, READ COMMITTED no lo evita.",
+    mirar: "Las dos barras se superponen: las dos transacciones corrieron a la vez. En la tabla <code>reservas_ingenuas</code> aparecen las dos filas marcadas.",
+    destacar: ps => ps[ps.length - 1],
+    async correr() {
+      await Promise.all([101, 102].map(c =>
+        enviar({ ruta: "/ingenuo/reservas", clave: null, body: cuerpo(c, 4), quien: "Cliente " + c })));
+    },
+    verificar(ps, e) {
+      const n = contar(e.reservasIngenuas, 4);
+      return [
+        chequeo(n === 2, `Reservas del conductor 4: ${n}`, "esperado 2", "bug"),
+        chequeo(ps.every(p => p.status === 201), "Los dos clientes recibieron 201", "")
+      ];
+    }
+  },
+  {
+    id: 5, corto: "Versión corregida", diapo: "Diapositiva 9",
+    titulo: "Caso 5 · Versión corregida",
+    escenario: "La misma carrera del caso 4, ahora contra el endpoint corregido <code>/reservas</code>. Cada cliente usa su propia clave: son dos intenciones distintas.",
+    esperado: ["Uno recibe 201.", "El otro recibe 409 Conflict: conductor ocupado.", "1 sola reserva en la base."],
+    como: "<code>SELECT … FOR UPDATE</code> bloquea la fila del conductor: el segundo espera y, cuando entra, ya ve la reserva del primero. El <code>UNIQUE (conductor_id, fecha_hora)</code> es la red de seguridad.",
+    mirar: "Las dos barras miden casi lo mismo, pero por motivos distintos: el 201 trabajó ese tiempo con el lock tomado; el 409 lo pasó esperando el lock y, cuando entró, respondió al instante.",
+    destacar: ps => ps.find(p => p.status === 409),
+    async correr(ctx) {
+      await Promise.all([101, 102].map(c =>
+        enviar({ ruta: "/reservas", clave: ctx.clave("caso5-" + c), body: cuerpo(c, 5), quien: "Cliente " + c })));
+    },
+    verificar(ps, e) {
+      const st = ps.map(p => p.status).sort().join(" y ");
+      return [
+        chequeo(st === "201 y 409", `Respuestas: ${st}`, "esperado 201 y 409"),
+        chequeo(contar(e.reservas, 5) === 1, `Reservas del conductor 5: ${contar(e.reservas, 5)}`, "esperado 1")
+      ];
+    }
+  }
+];
+
+// ---------------------------------------------------------------- estado
+
+let actual = 1;            // caso elegido, o "manual"
+let peticiones = [];
+let tInicio = 0;
+let seleccionada = null;
+let corriendo = false;
+let idsVistos = new Set();
+let ultimoEstado = { reservas: [], reservasIngenuas: [], claves: [] };
+
+try { performance.setResourceTimingBufferSize(2000); } catch (e) { /* opcional */ }
+
+const $ = id => document.getElementById(id);
+const rango = n => Array.from({ length: n }, (_, i) => i + 1);
+const cuerpo = (clienteId, conductorId) => ({ clienteId, conductorId, fechaHora: FECHA });
+const contar = (filas, conductor) => filas.filter(f => Number(f.conductor_id) === conductor).length;
+const chequeo = (ok, texto, esperado, tipo) => ({ ok, texto, esperado, tipo });
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+// ---------------------------------------------------------------- HTTP
+
+async function enviar({ ruta, clave, body, quien }) {
+  const marca = Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+  const url = ruta + "?p=" + marca;            // URL única: permite medir esta petición con Resource Timing
+  const headers = { "Content-Type": "application/json" };
+  if (clave !== null && clave !== undefined) headers["Idempotency-Key"] = '"' + clave + '"';
+  const p = { quien, ruta, url, headers, body, estado: "enviando", t0: performance.now() };
+  peticiones.push(p);
+  dibujarPeticiones();
+  try {
+    const r = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
+    p.cuerpo = await r.text();
+    p.status = r.status;
+    p.replay = r.headers.get("Idempotent-Replayed") === "true";
+    p.tipo = r.headers.get("Content-Type") || "";
+  } catch (e) {
+    p.status = 0;
+    p.cuerpo = String(e);
+  }
+  p.t1 = performance.now();
+  const medida = performance.getEntriesByName(new URL(url, location.href).href).pop();
+  p.envio = medida && medida.requestStart > 0 ? medida.requestStart : p.t0;
+  p.fin = medida && medida.responseEnd > 0 ? medida.responseEnd : p.t1;
+  p.estado = "lista";
+  dibujarPeticiones();
+  refrescarBase();
+  return p;
+}
+
+async function refrescarBase() {
+  try {
+    const r = await fetch("/demo/estado", { cache: "no-store" });
+    if (!r.ok) throw new Error(r.status);
+    ultimoEstado = await r.json();
+    $("estado-api").textContent = "API conectada";
+    $("estado-api").className = "pill ok";
+    dibujarBase();
+  } catch (e) {
+    $("estado-api").textContent = "la API no responde";
+    $("estado-api").className = "pill mal";
+  }
+  return ultimoEstado;
+}
+
+async function limpiarBase() {
+  await fetch("/demo/reset", { method: "POST" });
+  idsVistos = new Set();
+  await refrescarBase();
+}
+
+// ---------------------------------------------------------------- resultado de cada petición
+
+function clasificar(p) {
+  if (p.estado === "enviando") return { clase: "enviando", texto: "<b>…</b> esperando respuesta" };
+  if (p.status === 0) return { clase: "error", texto: "<b>sin respuesta</b>" };
+  let titulo = "";
+  try { const j = JSON.parse(p.cuerpo); titulo = j.title || ""; var id = j.id; } catch (e) { /* no es JSON */ }
+  if (p.status === 201 && p.replay) return { clase: "replay", texto: "<b>201</b> replay: respuesta guardada" };
+  if (p.status === 201) return { clase: "creada", texto: "<b>201</b> creó la reserva" + (id ? " #" + id : "") };
+  return { clase: "error", texto: "<b>" + p.status + "</b> " + esc(titulo) };
+}
+
+// ---------------------------------------------------------------- dibujo
+
+function dibujarPestanas() {
+  const nav = $("pestanas");
+  nav.innerHTML = "";
+  CASOS.forEach(c => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.innerHTML = '<span class="num">' + c.id + "</span>" + esc(c.corto);
+    b.className = actual === c.id ? "activo" : "";
+    b.onclick = () => elegir(c.id);
+    nav.appendChild(b);
+  });
+  const m = document.createElement("button");
+  m.type = "button";
+  m.innerHTML = '<span class="num">+</span>Petición manual';
+  m.className = actual === "manual" ? "activo" : "";
+  m.onclick = () => elegir("manual");
+  nav.appendChild(m);
+}
+
+function elegir(id) {
+  if (corriendo) return;
+  actual = id;
+  peticiones = [];
+  seleccionada = null;
+  $("verificacion").hidden = true;
+  dibujarPestanas();
+  dibujarExplicacion();
+  dibujarPeticiones();
+  dibujarDetalle();
+}
+
+function dibujarExplicacion() {
+  const caja = $("explicacion");
+  if (actual === "manual") {
+    caja.innerHTML = `
+      <p class="eti">Para las preguntas del coloquio</p>
+      <h2>Petición manual</h2>
+      <p>Armá una petición a mano y mirá qué responde la API. Las peticiones se acumulan en la lista y la base no se limpia sola.</p>
+      <form id="form-manual">
+        <label for="m-ruta">Endpoint</label>
+        <select id="m-ruta">
+          <option value="/reservas">POST /reservas (corregido)</option>
+          <option value="/ingenuo/reservas">POST /ingenuo/reservas (ingenuo)</option>
+        </select>
+        <label for="m-clave">Idempotency-Key</label>
+        <div class="fila-form">
+          <input id="m-clave" value="coloquio-001" autocomplete="off">
+          <button type="button" id="m-uuid" style="flex:0 0 auto">Nueva (UUID)</button>
+        </div>
+        <div class="check"><input type="checkbox" id="m-sin-clave"><label for="m-sin-clave" style="margin:0">Enviar sin Idempotency-Key</label></div>
+        <div class="fila-form">
+          <div><label for="m-cliente">clienteId</label><input id="m-cliente" type="number" value="42"></div>
+          <div><label for="m-conductor">conductorId (1 a 10)</label><input id="m-conductor" type="number" value="7"></div>
+        </div>
+        <label for="m-fecha">fechaHora</label>
+        <input id="m-fecha" value="${FECHA}">
+        <button class="ejecutar" type="submit">Enviar petición</button>
+      </form>
+      <p class="nota">Ideas: mandá la misma petición dos veces (replay), cambiá el conductor sin cambiar la clave (422), o destildá la clave (400).</p>`;
+    $("m-uuid").onclick = () => {
+      $("m-clave").value = (crypto.randomUUID ? crypto.randomUUID() : "clave-" + Date.now());
+    };
+    $("form-manual").onsubmit = async ev => {
+      ev.preventDefault();
+      if (!tInicio || peticiones.length === 0) tInicio = performance.now();
+      const conductor = Number($("m-conductor").value);
+      const p = await enviar({
+        ruta: $("m-ruta").value,
+        clave: $("m-sin-clave").checked ? null : $("m-clave").value,
+        body: { clienteId: Number($("m-cliente").value), conductorId: conductor, fechaHora: $("m-fecha").value },
+        quien: "Manual " + (peticiones.length + 1)
+      });
+      seleccionar(p);
+    };
+    return;
+  }
+  const c = CASOS.find(x => x.id === actual);
+  caja.innerHTML = `
+    <p class="eti">${esc(c.diapo)}</p>
+    <h2>${esc(c.titulo)}</h2>
+    <h3>Escenario</h3><p>${c.escenario}</p>
+    <h3>Qué esperamos</h3><ul class="esperado">${c.esperado.map(t => "<li>" + t + "</li>").join("")}</ul>
+    <h3>Cómo lo resuelve</h3><p>${c.como}</p>
+    <div class="mirar"><b>Qué mirar:</b> ${c.mirar}</div>
+    <button class="ejecutar" id="btn-ejecutar" type="button">▶ Ejecutar caso ${c.id}</button>
+    <p class="nota">Cada caso arranca con la base vacía.</p>`;
+  $("btn-ejecutar").onclick = () => ejecutar(c);
+}
+
+async function ejecutar(c) {
+  if (corriendo) return;
+  corriendo = true;
+  const boton = $("btn-ejecutar");
+  boton.disabled = true;
+  boton.textContent = "Ejecutando…";
+  document.querySelectorAll("nav button, #btn-limpiar").forEach(b => b.disabled = true);
+  $("verificacion").hidden = true;
+  try {
+    await limpiarBase();
+    peticiones = [];
+    seleccionada = null;
+    dibujarDetalle();
+    try { performance.clearResourceTimings(); } catch (e) { /* opcional */ }
+    const sello = Date.now().toString(36);
+    tInicio = performance.now();
+    await c.correr({ clave: nombre => "panel-" + nombre + "-" + sello });
+    const estado = await refrescarBase();
+    dibujarVerificacion(c.verificar(peticiones, estado));
+    const destacada = c.destacar ? c.destacar(peticiones) : null;
+    if (destacada) seleccionar(destacada);
+  } catch (e) {
+    dibujarVerificacion([chequeo(false, "Error al ejecutar el caso: " + esc(e.message || e), "")]);
+  } finally {
+    corriendo = false;
+    document.querySelectorAll("nav button, #btn-limpiar").forEach(b => b.disabled = false);
+    boton.disabled = false;
+    boton.textContent = "▶ Ejecutar de nuevo";
+  }
+}
+
+function dibujarVerificacion(items) {
+  $("lista-verif").innerHTML = items.map(i => {
+    const marca = i.tipo === "bug" && i.ok ? '<span class="marca bug">BUG</span>'
+      : i.ok ? '<span class="marca si">✔ OK</span>' : '<span class="marca no">✘ FALLA</span>';
+    const extra = i.ok || !i.esperado ? "" : ' <span class="nota">(' + esc(i.esperado) + ")</span>";
+    return "<li>" + marca + "<span>" + esc(i.texto) + extra + "</span></li>";
+  }).join("");
+  $("verificacion").hidden = false;
+}
+
+function pasoEje(total, maxMarcas) {
+  const pasos = [25, 50, 100, 200, 250, 500, 1000, 2000, 5000];
+  return pasos.find(p => total / p <= maxMarcas) || 10000;
+}
+
+function dibujarPeticiones() {
+  const caja = $("timeline");
+  if (peticiones.length === 0) {
+    caja.innerHTML = '<div class="vacio">' + (actual === "manual"
+      ? "Todavía no mandaste ninguna petición."
+      : "Elegí un caso y tocá <b>Ejecutar</b>.") + "</div>";
+    $("nota-peticiones").textContent = "";
+    return;
+  }
+  const ahora = performance.now();
+  const finDe = p => (p.estado === "lista" ? p.fin : ahora) - tInicio;
+  const total = Math.max(50, ...peticiones.map(finDe)) * 1.04;
+  const pct = ms => Math.max(0, Math.min(100, ms / total * 100));
+  const filas = peticiones.map((p, i) => {
+    const r = clasificar(p);
+    const inicio = p.t0 - tInicio;
+    const envio = (p.estado === "lista" ? p.envio : p.t0) - tInicio;
+    const fin = finDe(p);
+    const cola = envio - inicio > 2
+      ? `<div class="cola" style="left:${pct(inicio)}%;width:${pct(envio - inicio)}%"></div>` : "";
+    const barra = `<div class="barra ${r.clase}" style="left:${pct(envio)}%;width:${Math.max(0.6, pct(fin - envio))}%"></div>`;
+    const ms = p.estado === "lista" ? `<div class="ms">${Math.round(p.fin - p.envio)} ms en el servidor</div>` : "";
+    return `<div class="fila ${p === seleccionada ? "sel" : ""}" data-i="${i}">
+      <div class="quien" title="${esc(p.quien)}">${esc(p.quien)}</div>
+      <div class="pista">${cola}${barra}</div>
+      <div class="resultado r-${r.clase}">${r.texto}${ms}</div>
+    </div>`;
+  }).join("");
+  caja.innerHTML = filas + `<div class="eje"><div></div><div class="marcas"></div><div></div></div>`;
+  // Marcas del eje: una cada ~80 px como mínimo, según el ancho real de la pista.
+  const anchoPista = caja.querySelector(".marcas").clientWidth || 400;
+  const paso = pasoEje(total, Math.max(1, Math.floor(anchoPista / 80)));
+  let marcas = "";
+  for (let t = 0; t <= total; t += paso) {
+    marcas += `<span class="${t > 0 && pct(t) > 85 ? "ultima" : ""}" style="left:${pct(t)}%">${t} ms</span>`;
+  }
+  caja.querySelector(".marcas").innerHTML = marcas;
+  caja.querySelectorAll(".fila").forEach(f => f.onclick = () => seleccionar(peticiones[Number(f.dataset.i)]));
+  const listas = peticiones.filter(p => p.estado === "lista").length;
+  $("nota-peticiones").textContent = listas + " de " + peticiones.length + " respondidas";
+  if (peticiones.some(p => p.estado === "enviando")) requestAnimationFrame(dibujarPeticiones);
+}
+
+function seleccionar(p) {
+  seleccionada = p;
+  dibujarPeticiones();
+  dibujarDetalle();
+}
+
+function jsonLindo(texto) {
+  try { return JSON.stringify(JSON.parse(texto), null, 2); } catch (e) { return texto || ""; }
+}
+
+function dibujarDetalle() {
+  const caja = $("detalle");
+  const p = seleccionada;
+  if (!p) {
+    caja.innerHTML = '<div class="vacio">Tocá una petición de la lista para ver qué se mandó y qué respondió la API.</div>';
+    return;
+  }
+  const cabeceras = Object.entries(p.headers)
+    .map(([k, v]) => `<span class="k">${esc(k)}</span>: <span class="v">${esc(v)}</span>`).join("\n");
+  const pedido = `<span class="k">POST</span> ${esc(p.ruta)}\n${cabeceras}\n\n${esc(JSON.stringify(p.body, null, 2))}`;
+  let respuesta = "esperando respuesta…";
+  if (p.estado === "lista") {
+    const clase = p.status >= 200 && p.status < 300 ? "st-ok" : "st-err";
+    const extra = p.status === 201 ? `\n<span class="k">Idempotent-Replayed</span>: <span class="v">${p.replay}</span>` : "";
+    respuesta = `<span class="${clase}">HTTP ${p.status}</span>\n<span class="k">Content-Type</span>: <span class="v">${esc(p.tipo)}</span>${extra}\n\n${esc(jsonLindo(p.cuerpo))}`;
+  }
+  caja.innerHTML = `<div class="detalle">
+    <div><h3 style="margin-top:0">${esc(p.quien)} · petición</h3><pre>${pedido}</pre></div>
+    <div><h3 style="margin-top:0">Respuesta</h3><pre>${respuesta}</pre></div>
+  </div>`;
+}
+
+function dibujarBase() {
+  const e = ultimoEstado;
+  const duplicados = filas => {
+    const vistos = {};
+    filas.forEach(f => { const k = f.conductor_id + "|" + f.fecha_hora; vistos[k] = (vistos[k] || 0) + 1; });
+    return f => vistos[f.conductor_id + "|" + f.fecha_hora] > 1;
+  };
+  const tabla = (nombre, explicacion, filas, columnas, claveFila, marcarDuplicadas) => {
+    const dup = marcarDuplicadas ? duplicados(filas) : () => false;
+    const cuerpoTabla = filas.length === 0
+      ? `<div class="sin-filas">sin filas</div>`
+      : `<table><thead><tr>${columnas.map(c => "<th>" + c[1] + "</th>").join("")}</tr></thead><tbody>${
+          filas.map(f => {
+            const id = nombre + ":" + claveFila(f);
+            const nueva = !idsVistos.has(id);
+            idsVistos.add(id);
+            const clases = [nueva ? "nueva" : "", dup(f) ? "duplicada" : ""].join(" ");
+            return `<tr class="${clases}">${columnas.map(c => "<td>" + esc(f[c[0]] ?? "") + "</td>").join("")}</tr>`;
+          }).join("")}</tbody></table>`;
+    return `<div class="tabla-titulo"><h3>${nombre}</h3><span class="cuenta">${filas.length} ${filas.length === 1 ? "fila" : "filas"}</span></div>
+      <p class="nota" style="margin:0 0 4px">${explicacion}</p>${cuerpoTabla}`;
+  };
+  const dupIngenuas = e.reservasIngenuas.length > 0 && e.reservasIngenuas.some(duplicados(e.reservasIngenuas));
+  $("base").innerHTML =
+    tabla("reservas", "Versión corregida · UNIQUE (conductor_id, fecha_hora)", e.reservas,
+      [["id", "id"], ["cliente_id", "cliente"], ["conductor_id", "conductor"], ["fecha_hora", "fecha_hora"]], f => f.id, false) +
+    tabla("reservas_ingenuas", dupIngenuas
+        ? '<b style="color:#9A4313">Doble asignación: mismo conductor y horario dos veces</b>'
+        : "Versión ingenua · sin UNIQUE", e.reservasIngenuas,
+      [["id", "id"], ["cliente_id", "cliente"], ["conductor_id", "conductor"], ["fecha_hora", "fecha_hora"]], f => f.id, true) +
+    tabla("idempotency_records", "Clave · fingerprint (SHA-256, primeros 10) · estado", e.claves,
+      [["clave", "clave"], ["hash", "hash"], ["estado", "estado"], ["status_http", "status"]], f => f.clave, false);
+}
+
+// ---------------------------------------------------------------- inicio
+
+$("btn-limpiar").onclick = async () => {
+  if (corriendo) return;
+  await limpiarBase();
+  peticiones = [];
+  seleccionada = null;
+  $("verificacion").hidden = true;
+  dibujarPeticiones();
+  dibujarDetalle();
+};
+
+dibujarPestanas();
+dibujarExplicacion();
+refrescarBase();
+setInterval(() => { if (!corriendo) refrescarBase(); }, 4000);
+</script>
+</body>
+</html>

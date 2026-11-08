@@ -21,7 +21,8 @@ La aplicación de estos conceptos en el sistema real está en el TPI, módulo M3
 # 1. Levantar PostgreSQL y la API (la primera vez tarda unos minutos en compilar)
 docker compose up --build -d
 
-# 2. Correr los 5 casos
+# 2a. Panel visual: abrir http://localhost:8080 en el navegador
+# 2b. O correr los 5 casos por consola
 ./demo.sh
 
 # 3. (Opcional) Ver en vivo qué hace cada petición
@@ -72,6 +73,23 @@ Si `./demo.sh` da *permission denied*, ejecutá `chmod +x demo.sh` o corré `bas
 ━━ Resumen ━━
   9 verificaciones OK, 0 fallas
 ```
+
+---
+
+## Panel visual
+
+Con la demo levantada, abrí **http://localhost:8080**. Es la forma recomendada de mostrarla en una exposición:
+
+- **Una pestaña por caso.** Cada una explica el escenario, qué se espera y cómo lo resuelve el código. Tiene un botón **Ejecutar**.
+- **Peticiones.** Una línea de tiempo con una barra por petición: cuándo salió, cuánto tardó en el servidor y qué respondió (creó, replay, 409, 422). Así se ve, por ejemplo, que en el caso 2 las peticiones esperaron a la primera.
+- **Detalle.** Al tocar una petición se ve exactamente qué se mandó (headers y body) y qué respondió la API, incluido el problem+json.
+- **Base de datos en vivo.** Las tablas `reservas`, `reservas_ingenuas` e `idempotency_records`. La doble asignación del caso 4 aparece resaltada.
+- **Verificación.** Al terminar cada caso, consulta la base y marca OK, FALLA o BUG.
+- **Petición manual.** Sirve para responder preguntas en el coloquio: armar una petición a mano, repetirla, cambiarle el body o quitarle la clave.
+
+Las peticiones las hace el navegador, contra la misma API que usa `demo.sh`. El navegador abre como máximo 6 conexiones a la vez, así que en el caso 2 las peticiones 7 a 10 esperan un momento en su cola; el panel lo muestra como un tramo punteado. `demo.sh` manda las 10 juntas.
+
+El panel no depende de internet: es un único archivo, `src/main/resources/static/index.html`. Usa dos endpoints de apoyo que no son parte de la API de reservas: `GET /demo/estado` (el contenido de las tablas) y `POST /demo/reset` (vaciarlas). Están en `panel/PanelController.java`.
 
 ---
 
@@ -160,6 +178,7 @@ Si algo falla, el ROLLBACK borra también la clave, y un reintento vuelve a proc
 | `UNIQUE (conductor_id, fecha_hora)` | `db/migration/V1__esquema.sql` |
 | Versión ingenua (check-then-act) | `reserva/ReservaIngenuaService.java` |
 | Respuestas `problem+json` (400 / 409 / 422) | `api/ProblemaHttp.java`, `api/ManejadorErrores.java` |
+| Panel visual | `resources/static/index.html`, `panel/PanelController.java` |
 
 ### Política de idempotencia (lo que el draft pide publicar)
 
