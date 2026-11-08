@@ -1,0 +1,35 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: demo-idempotencia-concurrencia
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5433/demo}
+    username: ${DB_USER:demo}
+    password: ${DB_PASSWORD:demo}
+    hikari:
+      # Más conexiones que peticiones paralelas del caso 2 (10),
+      # para que la concurrencia ocurra en PostgreSQL y no en el pool.
+      maximum-pool-size: 20
+  flyway:
+    enabled: true
+
+demo:
+  # Pausa entre el "check" y el "act" (milisegundos). Agranda a propósito la
+  # ventana de carrera para que el caso 4 sea reproducible en una notebook.
+  ventana-carrera-ms: ${VENTANA_CARRERA_MS:300}
+  # Cuánto espera una transacción por un lock antes de rendirse (milisegundos).
+  # Superado ese tiempo, la API responde 409 "petición en curso".
+  lock-timeout-ms: ${LOCK_TIMEOUT_MS:5000}
+  idempotencia:
+    # Tiempo de vida (TTL) de las claves de idempotencia.
+    ttl-horas: ${IDEMPOTENCIA_TTL_HORAS:24}
+    # Cada cuánto corre la purga de claves vencidas (milisegundos).
+    purga-cada-ms: ${IDEMPOTENCIA_PURGA_MS:3600000}
+
+logging:
+  level:
+    ar.edu.utn.frre.grupo2: INFO
+  pattern:
+    console: "%d{HH:mm:ss.SSS} %-5level [%-18.18thread] %logger{0} - %msg%n"

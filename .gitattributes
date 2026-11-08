@@ -1,0 +1,2 @@
+# demo.sh tiene que conservar finales de línea LF aunque se clone en Windows.
+*.sh text eol=lf

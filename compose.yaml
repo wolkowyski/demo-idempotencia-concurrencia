@@ -1,0 +1,30 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: demo
+      POSTGRES_USER: demo
+      POSTGRES_PASSWORD: demo
+    ports:
+      # 5433 en el host para no chocar con el PostgreSQL del TPI (5432).
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U demo -d demo"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  app:
+    build: .
+    environment:
+      DB_URL: jdbc:postgresql://db:5432/demo
+      DB_USER: demo
+      DB_PASSWORD: demo
+      VENTANA_CARRERA_MS: "300"
+      LOCK_TIMEOUT_MS: "5000"
+      IDEMPOTENCIA_TTL_HORAS: "24"
+    ports:
+      - "8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
