@@ -53,5 +53,25 @@ services:
         mvn -q dependency:get -Dartifact=org.postgresql:postgresql:42.7.4 -Dtransitive=false
         && java -cp /root/.m2/repository/org/postgresql/postgresql/42.7.4/postgresql-42.7.4.jar DemoSimple.java
 
+  # La misma demo simple, en Python.  Se corre con:  docker compose run --rm simple-py
+  simple-py:
+    profiles: ["simple"]
+    image: python:3.12-slim
+    working_dir: /explicacion
+    volumes:
+      - ./explicacion:/explicacion:ro
+      - pip:/root/.cache/pip
+    environment:
+      DB_URL: postgresql://demo:demo@db:5432/postgres
+      PYTHONUNBUFFERED: "1"
+    depends_on:
+      db:
+        condition: service_healthy
+    command:
+      - sh
+      - -c
+      - pip install -q --root-user-action=ignore "psycopg[binary]" && python demo_simple.py
+
 volumes:
   m2:
+  pip:
