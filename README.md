@@ -74,6 +74,17 @@ Si `./demo.sh` da *permission denied*, ejecutá `chmod +x demo.sh` o corré `bas
   9 verificaciones OK, 0 fallas
 ```
 
+### Pruebas
+
+`demo.sh` es la batería de pruebas de integración del proyecto. Manda peticiones HTTP reales a la API levantada y, después de cada caso, verifica el resultado con consultas directas a PostgreSQL: **9 verificaciones en total**. Termina con código de salida `0` si pasan todas y `1` si alguna falla, así que también sirve en un pipeline de CI.
+
+```bash
+./demo.sh                                  # contra http://localhost:8080
+API=http://localhost:8081 ./demo.sh        # contra otro puerto
+```
+
+El panel visual ejecuta los mismos cinco casos y muestra las mismas verificaciones (OK, FALLA o BUG) consultando la base al final de cada uno.
+
 ---
 
 ## Panel visual
