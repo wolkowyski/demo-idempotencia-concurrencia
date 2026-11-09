@@ -28,3 +28,30 @@ services:
     depends_on:
       db:
         condition: service_healthy
+
+  # Demo simple para explicar el código: un solo archivo Java, sin frameworks.
+  # Se corre a demanda con:  docker compose run --rm simple
+  # Usa la base "postgres" del mismo servidor, separada de la base "demo" de la API.
+  simple:
+    profiles: ["simple"]
+    image: maven:3.9-eclipse-temurin-21
+    working_dir: /explicacion
+    volumes:
+      - ./explicacion:/explicacion:ro
+      - m2:/root/.m2
+    environment:
+      DB_URL: jdbc:postgresql://db:5432/postgres
+      DB_USER: demo
+      DB_PASSWORD: demo
+    depends_on:
+      db:
+        condition: service_healthy
+    command:
+      - sh
+      - -c
+      - >-
+        mvn -q dependency:get -Dartifact=org.postgresql:postgresql:42.7.4 -Dtransitive=false
+        && java -cp /root/.m2/repository/org/postgresql/postgresql/42.7.4/postgresql-42.7.4.jar DemoSimple.java
+
+volumes:
+  m2:

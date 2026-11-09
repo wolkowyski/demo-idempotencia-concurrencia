@@ -11,6 +11,27 @@ La aplicación de estos conceptos en el sistema real está en el TPI, módulo M3
 
 **Stack:** Java 21 · Spring Boot 3.5 · PostgreSQL 16 · Flyway · Docker Compose · header `Idempotency-Key` (draft IETF `draft-ietf-httpapi-idempotency-key-header`).
 
+## Dos demos, dos usos
+
+| | Para qué | Dónde | Cómo se corre |
+|---|---|---|---|
+| **Demo simple** | **Explicar el código.** Un solo archivo Java, sin frameworks: las tablas, la versión ingenua, la versión corregida y los 5 casos. Cada cliente es un hilo. | `explicacion/DemoSimple.java` | `docker compose run --rm simple` |
+| **Demo completa** | **Mostrar** el funcionamiento: API REST real con Spring Boot y panel visual. | `src/` | `docker compose up --build -d` y abrir `http://localhost:8080` |
+
+Las dos aplican la misma lógica con el mismo SQL. La simple usa la base `postgres` del mismo servidor, así que no interfiere con la completa.
+
+### Demo simple: cómo leer `DemoSimple.java`
+
+| Sección del archivo | Qué se explica |
+|---|---|
+| `ESQUEMA` | Las tablas y los dos `UNIQUE`: el de la clave (tema 9) y el del conductor + horario (tema 10) |
+| `reservarIngenuo(...)` | Caso 4: CHECK, pausa, ACT. Dos hilos ven "libre" y los dos insertan |
+| `reservarCorregido(...)` | Casos 1, 2, 3 y 5: los 5 pasos en una transacción, cada uno marcado como TEMA 9 o TEMA 10 |
+| `main(...)` | Los 5 casos, uno detrás del otro, con su verificación ✔ en la base |
+| Ayudantes | `alMismoTiempo(...)` larga N hilos en el mismo instante; el resto es JDBC. No hace falta explicarlos |
+
+La primera vez, `docker compose run --rm simple` baja el driver de PostgreSQL; las siguientes arranca en segundos. Hace falta que la base esté levantada (`docker compose up -d`).
+
 ---
 
 ## Cómo correrla
