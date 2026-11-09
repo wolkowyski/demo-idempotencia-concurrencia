@@ -72,6 +72,18 @@ services:
       - -c
       - pip install -q --root-user-action=ignore "psycopg[binary]" && python demo_simple.py
 
+  # Los 10 casos básicos (Python puro, sin base de datos).
+  # Todos:  docker compose run --rm casos      Uno solo:  docker compose run --rm casos 6
+  casos:
+    profiles: ["simple"]
+    image: python:3.12-slim
+    working_dir: /explicacion
+    volumes:
+      - ./explicacion:/explicacion:ro
+    environment:
+      PYTHONUNBUFFERED: "1"
+    entrypoint: ["python", "casos_basicos.py"]
+
 volumes:
   m2:
   pip:

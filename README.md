@@ -11,6 +11,31 @@ La aplicación de estos conceptos en el sistema real está en el TPI, módulo M3
 
 **Stack:** Java 21 · Spring Boot 3.5 · PostgreSQL 16 · Flyway · Docker Compose · header `Idempotency-Key` (draft IETF `draft-ietf-httpapi-idempotency-key-header`).
 
+## Tres niveles para explicar y mostrar
+
+| | Para qué | Dónde | Cómo se corre |
+|---|---|---|---|
+| **10 casos básicos** | **Explicar la teoría.** Python puro, sin base de datos: 5 casos de idempotencia y 5 de concurrencia, cada uno en una función corta. | `explicacion/casos_basicos.py` | `docker compose run --rm casos` (o `... casos 6` para uno solo), o `python explicacion/casos_basicos.py` si tenés Python |
+| **Demo simple** | **Explicar el código integrado:** los dos temas juntos sobre PostgreSQL, en un archivo. | `explicacion/DemoSimple.java` o `demo_simple.py` | `docker compose run --rm simple` o `simple-py` |
+| **Demo completa** | **Mostrar** el funcionamiento con la API real y el panel. | `src/` | `docker compose up --build -d` y `http://localhost:8080` |
+
+### Los 10 casos básicos
+
+| Caso | Tema | Qué muestra |
+|---|---|---|
+| 1 | 9 | `fijar(100)` repetido da 100; `sumar(100)` repetido da 300: idempotente frente a no idempotente |
+| 2 | 9 | DELETE dos veces: la respuesta cambia (200 y 404) pero el efecto es el mismo |
+| 3 | 9 | Deduplicación por clave natural: el mismo usuario dos veces, una sola alta |
+| 4 | 9 | Idempotency-Key: 3 reintentos de un pago cobran 3 veces sin clave y 1 vez con clave (replay) |
+| 5 | 9 | Misma clave con otro monto: la huella (hash) lo detecta y responde 422 |
+| 6 | 10 | Condición de carrera check-then-act: 2 clientes, mismo conductor, 2 reservas (bug) |
+| 7 | 10 | Actualización perdida: depósitos de 10 y 20 sobre 100 no dan 130 (bug) |
+| 8 | 10 | Solución pesimista: un lock alrededor del check-then-act, 1 reserva y un 409 |
+| 9 | 10 | Solución optimista: versión + reintento ante conflicto, saldo final 130 |
+| 10 | 9 + 10 | Punto de unión: dos reintentos simultáneos con la misma clave cobran dos veces si no hay control de concurrencia |
+
+Los locks de los casos 8 a 10 viven en la memoria de un solo proceso. Con varias réplicas, el lock tiene que estar en la base de datos: eso es lo que muestran la demo simple y la completa.
+
 ## Dos demos, dos usos
 
 | | Para qué | Dónde | Cómo se corre |
