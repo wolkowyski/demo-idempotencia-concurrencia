@@ -284,7 +284,7 @@ const FECHA = "2026-11-12T18:00:00";
 
 const CASOS = [
   {
-    id: 1, corto: "Reintento secuencial", diapo: "Diapositiva 7",
+    id: 1, corto: "Reintento secuencial", diapo: "Diapositiva 18",
     titulo: "Caso 1 · Reintento secuencial",
     escenario: "El cliente manda la reserva, no le llega la respuesta (timeout) y reintenta. Simulamos 10 intentos seguidos, siempre con la misma <code>Idempotency-Key</code> y el mismo body.",
     esperado: ["1 sola reserva en la base.", "La 1ª petición crea la reserva (201).", "Las otras 9 reciben la respuesta guardada (replay)."],
@@ -309,7 +309,7 @@ const CASOS = [
     }
   },
   {
-    id: 2, corto: "Reintento paralelo", diapo: "Diapositivas 5 y 7",
+    id: 2, corto: "Reintento paralelo", diapo: "Diapositivas 12 y 18",
     titulo: "Caso 2 · Reintento paralelo",
     escenario: "Las mismas 10 peticiones idénticas, pero todas al mismo tiempo: por ejemplo, un cliente que reintenta muy rápido o un balanceador que reenvía.",
     esperado: ["1 sola reserva en la base.", "Solo 1 petición crea; las demás hacen replay."],
@@ -330,7 +330,7 @@ const CASOS = [
     }
   },
   {
-    id: 3, corto: "Misma clave, otro body", diapo: "Diapositiva 8",
+    id: 3, corto: "Misma clave, otro body", diapo: "Diapositiva 19",
     titulo: "Caso 3 · Misma clave, otro body",
     escenario: "El cliente reusa la <code>Idempotency-Key</code> de una reserva ya hecha, pero cambia el conductor: del 3 al 6.",
     esperado: ["La original crea la reserva (201).", "El reuso devuelve 422 Unprocessable Content.", "No se crea ninguna reserva para el conductor 6."],
@@ -352,7 +352,7 @@ const CASOS = [
     }
   },
   {
-    id: 4, corto: "Versión ingenua", diapo: "Diapositiva 9",
+    id: 4, corto: "Versión ingenua", diapo: "Diapositiva 20",
     titulo: "Caso 4 · Versión ingenua: carrera por el conductor",
     escenario: "Dos clientes distintos reservan al conductor 4 para el mismo horario, en el mismo instante. Usan el endpoint sin bloqueo ni UNIQUE: <code>/ingenuo/reservas</code>.",
     esperado: ["Los dos reciben 201.", "Quedan 2 reservas para el mismo conductor: el bug de doble asignación."],
@@ -372,7 +372,7 @@ const CASOS = [
     }
   },
   {
-    id: 5, corto: "Versión corregida", diapo: "Diapositiva 9",
+    id: 5, corto: "Versión corregida", diapo: "Diapositiva 20",
     titulo: "Caso 5 · Versión corregida",
     escenario: "La misma carrera del caso 4, ahora contra el endpoint corregido <code>/reservas</code>. Cada cliente usa su propia clave: son dos intenciones distintas.",
     esperado: ["Uno recibe 201.", "El otro recibe 409 Conflict: conductor ocupado.", "1 sola reserva en la base."],
