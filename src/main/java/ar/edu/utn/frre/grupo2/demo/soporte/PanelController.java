@@ -1,4 +1,4 @@
-package ar.edu.utn.frre.grupo2.demo.panel;
+package ar.edu.utn.frre.grupo2.demo.soporte;
 
 import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;

@@ -1,150 +1,99 @@
 package ar.edu.utn.frre.grupo2.demo.reserva;
 
-import ar.edu.utn.frre.grupo2.demo.api.ErroresSql;
-import ar.edu.utn.frre.grupo2.demo.api.ProblemaHttp;
-import ar.edu.utn.frre.grupo2.demo.idempotencia.Huella;
-import ar.edu.utn.frre.grupo2.demo.idempotencia.IdempotenciaRepository;
-import ar.edu.utn.frre.grupo2.demo.idempotencia.RegistroIdempotencia;
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import ar.edu.utn.frre.grupo2.demo.soporte.Pausa;
+import ar.edu.utn.frre.grupo2.demo.soporte.ProblemaHttp;
+import ar.edu.utn.frre.grupo2.demo.soporte.Resultado;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Map;
 
 /**
- * Versión CORREGIDA de POST /reservas: Tema 9 + Tema 10 en una sola transacción.
+ * VERSIÓN CORREGIDA de POST /reservas.
  *
- * <pre>
- * BEGIN;
- *   SET LOCAL lock_timeout = ...;
- *   INSERT INTO idempotency_records ... ON CONFLICT (clave) DO NOTHING;  -- Tema 9 (+ concurrencia)
- *   SELECT ... FROM conductores WHERE id = ? FOR UPDATE;                 -- Tema 10: bloqueo pesimista
- *   SELECT EXISTS (... reservas ...);                                    -- check
- *   INSERT INTO reservas ...;                                            -- act (UNIQUE como red)
- *   UPDATE idempotency_records SET estado = 'COMPLETADA', ...;           -- respuesta para replays
- * COMMIT;
- * </pre>
+ * Los cinco pasos corren en UNA sola transacción: si algo falla, el ROLLBACK
+ * deshace todo, incluida la clave de idempotencia.
  *
- * Si algo falla, el ROLLBACK borra también la clave: un reintento vuelve a procesar.
+ *   Paso 1 · Tema 9  · registrar la Idempotency-Key       → replay o 422
+ *   Paso 2 · Tema 10 · bloquear al conductor (FOR UPDATE)
+ *   Paso 3 · Tema 10 · verificar que esté libre (check)   → 409
+ *   Paso 4 · Tema 10 · crear la reserva (act)
+ *   Paso 5 · Tema 9  · guardar la respuesta para los reintentos
  */
 @Service
 public class ReservaService {
 
-    private static final Logger log = LoggerFactory.getLogger(ReservaService.class);
-
     private final JdbcTemplate jdbc;
-    private final IdempotenciaRepository idempotencia;
-    private final VentanaDeCarrera ventana;
-    private final ObjectMapper mapper;
-    private final long lockTimeoutMs;
+    private final long ventanaDeCarreraMs;
 
-    public ReservaService(JdbcTemplate jdbc,
-                          IdempotenciaRepository idempotencia,
-                          VentanaDeCarrera ventana,
-                          ObjectMapper mapper,
-                          @Value("${demo.lock-timeout-ms}") long lockTimeoutMs) {
+    public ReservaService(JdbcTemplate jdbc, @Value("${demo.ventana-carrera-ms}") long ventanaDeCarreraMs) {
         this.jdbc = jdbc;
-        this.idempotencia = idempotencia;
-        this.ventana = ventana;
-        this.mapper = mapper;
-        this.lockTimeoutMs = lockTimeoutMs;
+        this.ventanaDeCarreraMs = ventanaDeCarreraMs;
     }
 
     @Transactional
-    public Resultado crear(String clave, ReservaRequest req) {
-        // Ninguna espera por locks dura más que esto (valor numérico de configuración, no del cliente).
-        jdbc.execute("SET LOCAL lock_timeout = " + lockTimeoutMs);
+    public Resultado reservar(String clave, ReservaRequest pedido) {
 
-        String hash = Huella.sha256(req.canonico());
+        // ── PASO 1 · TEMA 9: registrar la clave de idempotencia ────────────────────
+        // clave tiene una restricción UNIQUE. Si otra petición con la MISMA clave
+        // todavía no terminó, PostgreSQL hace esperar a este INSERT hasta su COMMIT.
+        // Ese es el punto de unión de los dos temas: no hay hueco entre
+        // "¿existe la clave?" y "la guardo".
+        String hash = pedido.huella();
+        int insertadas = jdbc.update("""
+                INSERT INTO idempotency_records (clave, hash, estado)
+                VALUES (?, ?, 'EN_CURSO')
+                ON CONFLICT (clave) DO NOTHING
+                """, clave, hash);
 
-        // ---- 1. Tema 9: registrar la clave ------------------------------------------
-        boolean claveNueva;
-        try {
-            claveNueva = idempotencia.registrar(clave, hash);
-        } catch (DataAccessException e) {
-            if (ErroresSql.esLockTimeout(e)) {
-                log.info("[corregida] clave={} -> 409 (la petición original sigue en curso)", clave);
-                throw ProblemaHttp.peticionEnCurso();
+        if (insertadas == 0) {
+            // La clave ya existía: es un reintento.
+            Map<String, Object> anterior = jdbc.queryForMap(
+                    "SELECT hash, status_http, respuesta FROM idempotency_records WHERE clave = ?", clave);
+
+            if (!hash.equals(anterior.get("hash"))) {
+                throw ProblemaHttp.claveReusada();                              // CASO 3 → 422
             }
-            throw e;
+            return Resultado.replay((Integer) anterior.get("status_http"),     // CASOS 1 y 2 → replay
+                    (String) anterior.get("respuesta"));
         }
 
-        if (!claveNueva) {
-            // Llegamos acá después de que la transacción original confirmó: vemos su registro.
-            RegistroIdempotencia registro = idempotencia.buscar(clave)
-                    .orElseThrow(ProblemaHttp::peticionEnCurso);
-            if (!registro.hash().equals(hash)) {
-                log.info("[corregida] clave={} -> 422 (misma clave, body distinto)", clave);
-                throw ProblemaHttp.claveReusada();
-            }
-            if (!registro.completada()) {
-                throw ProblemaHttp.peticionEnCurso();
-            }
-            log.info("[corregida] clave={} -> replay {}", clave, registro.statusHttp());
-            return Resultado.replay(registro.statusHttp(), registro.respuesta());
-        }
-
-        // ---- 2. Tema 10: bloqueo pesimista sobre el conductor -------------------------
-        List<Long> conductor;
-        try {
-            conductor = jdbc.queryForList(
-                    "SELECT id FROM conductores WHERE id = ? FOR UPDATE",
-                    Long.class, req.conductorId());
-        } catch (DataAccessException e) {
-            if (ErroresSql.esLockTimeout(e)) {
-                throw ProblemaHttp.conductorBloqueado(req.conductorId());
-            }
-            throw e;
-        }
+        // ── PASO 2 · TEMA 10: bloqueo pesimista del conductor ───────────────────────
+        // Si otra transacción ya tiene el lock de este conductor, esta ESPERA acá.
+        List<Long> conductor = jdbc.queryForList(
+                "SELECT id FROM conductores WHERE id = ? FOR UPDATE", Long.class, pedido.conductorId());
         if (conductor.isEmpty()) {
-            throw ProblemaHttp.conductorInexistente(req.conductorId());
+            throw ProblemaHttp.conductorInexistente(pedido.conductorId());     // → 404
         }
 
-        // ---- 3. Check: con el lock tomado, nadie más puede estar en este punto --------
+        // ── PASO 3 · TEMA 10: CHECK, ahora seguro porque tenemos el lock ───────────
         Boolean ocupado = jdbc.queryForObject(
                 "SELECT EXISTS (SELECT 1 FROM reservas WHERE conductor_id = ? AND fecha_hora = ?)",
-                Boolean.class, req.conductorId(), req.fechaHora());
+                Boolean.class, pedido.conductorId(), pedido.fechaHora());
         if (Boolean.TRUE.equals(ocupado)) {
-            log.info("[corregida] clave={} conductor={} -> 409 (conductor ocupado)", clave, req.conductorId());
-            throw ProblemaHttp.conductorOcupado(req.conductorId(), req.fechaHora());
+            throw ProblemaHttp.conductorOcupado();                              // CASO 5 → 409
         }
 
-        ventana.esperar();
+        Pausa.de(ventanaDeCarreraMs);   // misma pausa que la versión ingenua: acá no hace daño
 
-        // ---- 4. Act: la restricción UNIQUE es la red de seguridad ---------------------
-        Long id;
-        try {
-            id = jdbc.queryForObject("""
-                            INSERT INTO reservas (cliente_id, conductor_id, fecha_hora)
-                            VALUES (?, ?, ?)
-                            RETURNING id
-                            """,
-                    Long.class, req.clienteId(), req.conductorId(), req.fechaHora());
-        } catch (DataAccessException e) {
-            if (ErroresSql.esViolacionUnique(e)) {
-                throw ProblemaHttp.conductorOcupado(req.conductorId(), req.fechaHora());
-            }
-            throw e;
-        }
+        // ── PASO 4 · TEMA 10: ACT. UNIQUE (conductor_id, fecha_hora) es la red de seguridad
+        Long id = jdbc.queryForObject("""
+                INSERT INTO reservas (cliente_id, conductor_id, fecha_hora)
+                VALUES (?, ?, ?)
+                RETURNING id
+                """, Long.class, pedido.clienteId(), pedido.conductorId(), pedido.fechaHora());
 
-        // ---- 5. Guardar la respuesta en el mismo COMMIT -------------------------------
-        String json = aJson(new ReservaResponse(id, req.clienteId(), req.conductorId(), req.fechaHora()));
-        idempotencia.completar(clave, 201, json);
-        log.info("[corregida] clave={} conductor={} -> 201 reserva {}", clave, req.conductorId(), id);
-        return Resultado.nuevo(201, json);
-    }
+        // ── PASO 5 · TEMA 9: guardar la respuesta para los futuros reintentos ───────
+        String respuesta = new ReservaResponse(id, pedido).aJson();
+        jdbc.update("""
+                UPDATE idempotency_records
+                SET estado = 'COMPLETADA', status_http = 201, respuesta = ?
+                WHERE clave = ?
+                """, respuesta, clave);
 
-    private String aJson(Object valor) {
-        try {
-            return mapper.writeValueAsString(valor);
-        } catch (JsonProcessingException e) {
-            throw new IllegalStateException("No se pudo serializar la respuesta", e);
-        }
+        return Resultado.nuevo(201, respuesta);                                 // → 201 Created
     }
 }

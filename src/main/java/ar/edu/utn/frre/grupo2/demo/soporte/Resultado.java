@@ -1,8 +1,6 @@
-package ar.edu.utn.frre.grupo2.demo.reserva;
+package ar.edu.utn.frre.grupo2.demo.soporte;
 
-/**
- * Respuesta HTTP ya serializada: así un replay devuelve exactamente lo mismo que la primera vez.
- */
+/** Respuesta HTTP ya armada; replay = true cuando es la respuesta guardada de un reintento. */
 public record Resultado(int status, String cuerpoJson, boolean replay) {
 
     public static Resultado nuevo(int status, String cuerpoJson) {

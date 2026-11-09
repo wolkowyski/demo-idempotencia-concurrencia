@@ -12,6 +12,8 @@ spring:
       # Más conexiones que peticiones paralelas del caso 2 (10),
       # para que la concurrencia ocurra en PostgreSQL y no en el pool.
       maximum-pool-size: 20
+      # Ninguna espera por un lock dura más que esto: superado, la API responde 409.
+      connection-init-sql: SET lock_timeout = ${LOCK_TIMEOUT_MS:5000}
   flyway:
     enabled: true
 
@@ -19,9 +21,6 @@ demo:
   # Pausa entre el "check" y el "act" (milisegundos). Agranda a propósito la
   # ventana de carrera para que el caso 4 sea reproducible en una notebook.
   ventana-carrera-ms: ${VENTANA_CARRERA_MS:300}
-  # Cuánto espera una transacción por un lock antes de rendirse (milisegundos).
-  # Superado ese tiempo, la API responde 409 "petición en curso".
-  lock-timeout-ms: ${LOCK_TIMEOUT_MS:5000}
   idempotencia:
     # Tiempo de vida (TTL) de las claves de idempotencia.
     ttl-horas: ${IDEMPOTENCIA_TTL_HORAS:24}

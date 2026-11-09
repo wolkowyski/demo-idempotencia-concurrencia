@@ -100,7 +100,7 @@ Con la demo levantada, abrí **http://localhost:8080**. Es la forma recomendada 
 
 Las peticiones las hace el navegador, contra la misma API que usa `demo.sh`. El navegador abre como máximo 6 conexiones a la vez, así que en el caso 2 las peticiones 7 a 10 esperan un momento en su cola; el panel lo muestra como un tramo punteado. `demo.sh` manda las 10 juntas.
 
-El panel no depende de internet: es un único archivo, `src/main/resources/static/index.html`. Usa dos endpoints de apoyo que no son parte de la API de reservas: `GET /demo/estado` (el contenido de las tablas) y `POST /demo/reset` (vaciarlas). Están en `panel/PanelController.java`.
+El panel no depende de internet: es un único archivo, `src/main/resources/static/index.html`. Usa dos endpoints de apoyo que no son parte de la API de reservas: `GET /demo/estado` (el contenido de las tablas) y `POST /demo/reset` (vaciarlas). Están en `soporte/PanelController.java`.
 
 ---
 
@@ -149,14 +149,35 @@ Los errores se devuelven como `application/problem+json` (RFC 9457).
 
 ---
 
-## Cómo está hecho
+## Código para exponer: 4 archivos
 
-Toda la lógica de la versión corregida ocurre en **una sola transacción**, en `ReservaService`:
+Todo lo que hay que explicar está en estos cuatro archivos. El resto, en `soporte/`, es infraestructura (errores, purga de claves y panel) y no hace falta abrirlo en la exposición.
+
+| Orden | Archivo | Qué se explica |
+|---|---|---|
+| 1 | `src/main/resources/db/migration/V1__esquema.sql` | Las tablas y las dos restricciones `UNIQUE`: la de la clave (tema 9) y la del conductor + horario (tema 10) |
+| 2 | `reserva/ReservaController.java` | Los dos endpoints y la Idempotency-Key obligatoria (400 si falta) |
+| 3 | `reserva/ReservaService.java` | La versión corregida en 5 pasos numerados, en una transacción |
+| 4 | `reserva/ReservaIngenuaService.java` | La versión ingenua: check-then-act sin protección |
+
+Las rutas de Java empiezan en `src/main/java/ar/edu/utn/frre/grupo2/demo/`. En VS Code, Ctrl + P y el nombre del archivo lo abre directo.
+
+### Recorrido del código por caso
+
+| Caso | Qué pasa en el código |
+|---|---|
+| 1 · Reintento secuencial | La 1ª petición recorre los pasos 1 a 5 de `ReservaService`. Desde la 2ª, el `INSERT … ON CONFLICT` del paso 1 devuelve 0 filas: el hash coincide, así que vuelve `Resultado.replay(...)` con la respuesta guardada en el paso 5. |
+| 2 · Reintento paralelo | Las 10 llegan juntas al paso 1. Una inserta la clave; las otras 9 **esperan en el `UNIQUE (clave)`** hasta que la primera hace COMMIT, después ven 0 filas y hacen replay. |
+| 3 · Reuso de clave | Paso 1: la clave existe, pero `hash.equals(...)` da falso porque cambió el conductor: `ProblemaHttp.claveReusada()` responde 422. |
+| 4 · Versión ingenua | `ReservaIngenuaService`: los dos clientes hacen el `SELECT EXISTS` (check), los dos ven "libre", los dos esperan la pausa y los dos hacen el `INSERT` (act). No hay `UNIQUE` que los frene. |
+| 5 · Versión corregida | Paso 2: el `SELECT … FOR UPDATE` deja pasar a uno solo. El segundo espera el lock y, cuando entra, el paso 3 ya ve la reserva del primero: `ProblemaHttp.conductorOcupado()` responde 409. |
+
+### La transacción en SQL
+
+Toda la versión corregida ocurre en **una sola transacción**. El `lock_timeout` se fija para cada conexión en `application.yml`.
 
 ```sql
 BEGIN;
-  SET LOCAL lock_timeout = 5000;
-
   -- Tema 9: registrar la clave. Si otra transacción ya la insertó y no confirmó,
   -- esta sentencia ESPERA en el índice UNIQUE hasta su COMMIT.
   INSERT INTO idempotency_records (clave, hash, estado)
@@ -181,15 +202,16 @@ Si algo falla, el ROLLBACK borra también la clave, y un reintento vuelve a proc
 
 | Concepto (presentación) | Dónde está |
 |---|---|
-| Header `Idempotency-Key`, validación de formato | `idempotencia/ClaveIdempotencia.java` |
-| Fingerprint: SHA-256 del body canónico | `idempotencia/Huella.java`, `ReservaRequest.canonico()` |
-| Tabla de claves, `UNIQUE (clave)` | `db/migration/V1__esquema.sql`, `idempotencia/IdempotenciaRepository.java` |
-| TTL de las claves (24 h) | `idempotencia/PurgaIdempotencia.java` |
-| Bloqueo pesimista `SELECT … FOR UPDATE` | `reserva/ReservaService.java` |
+| Header `Idempotency-Key` obligatorio | `reserva/ReservaController.java` |
+| Fingerprint: SHA-256 del body | `ReservaRequest.huella()` |
+| Tabla de claves, `UNIQUE (clave)` | `db/migration/V1__esquema.sql` y paso 1 de `ReservaService` |
+| Bloqueo pesimista `SELECT … FOR UPDATE` | Paso 2 de `ReservaService` |
 | `UNIQUE (conductor_id, fecha_hora)` | `db/migration/V1__esquema.sql` |
 | Versión ingenua (check-then-act) | `reserva/ReservaIngenuaService.java` |
-| Respuestas `problem+json` (400 / 409 / 422) | `api/ProblemaHttp.java`, `api/ManejadorErrores.java` |
-| Panel visual | `resources/static/index.html`, `panel/PanelController.java` |
+| TTL de las claves (24 h) | `soporte/PurgaIdempotencia.java` |
+| Respuestas `problem+json` (400 / 404 / 409 / 422) | `soporte/ProblemaHttp.java`, `soporte/ManejadorErrores.java` |
+| `lock_timeout` | `application.yml` (`connection-init-sql`) |
+| Panel visual | `resources/static/index.html`, `soporte/PanelController.java` |
 
 ### Política de idempotencia (lo que el draft pide publicar)
 
